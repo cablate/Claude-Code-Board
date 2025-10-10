@@ -128,6 +128,26 @@ export class Database {
           }
         });
 
+        // Add cli_type column if it doesn't exist (migration)
+        this.db.run(`
+          ALTER TABLE sessions ADD COLUMN cli_type TEXT DEFAULT 'claude-code'
+        `, (err) => {
+          // Ignore error if column already exists
+          if (err && !err.message.includes('duplicate column name')) {
+            console.warn('Failed to add cli_type column:', err.message);
+          }
+        });
+
+        // Add codex_config column if it doesn't exist (migration)
+        this.db.run(`
+          ALTER TABLE sessions ADD COLUMN codex_config TEXT
+        `, (err) => {
+          // Ignore error if column already exists
+          if (err && !err.message.includes('duplicate column name')) {
+            console.warn('Failed to add codex_config column:', err.message);
+          }
+        });
+
         // Create messages table
         this.db.run(`
           CREATE TABLE IF NOT EXISTS messages (

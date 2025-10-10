@@ -12,6 +12,9 @@ export interface Session {
   lastUserMessage?: string; // 最後用戶發送的訊息
   messageCount?: number; // 對話次數
   sortOrder?: number; // 排序順序
+  // CLI 類型相關
+  cliType?: 'claude-code' | 'codex'; // CLI 類型
+  codexConfig?: string; // Codex 設定 (JSON 字串)
   createdAt: Date;
   updatedAt: Date;
   completedAt?: Date;
@@ -63,6 +66,9 @@ export interface CreateSessionRequest {
   dangerouslySkipPermissions?: boolean;
   workflow_stage_id?: string;
   work_item_id?: string;
+  // CLI 類型相關
+  cliType?: 'claude-code' | 'codex';
+  codexConfig?: any; // Codex 設定物件
 }
 
 export interface SessionResponse {

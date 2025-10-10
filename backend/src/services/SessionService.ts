@@ -5,71 +5,158 @@ import { io } from "../server";
 import { CreateSessionRequest, Session, SessionStatus } from "../types/session.types";
 import { logger } from "../utils/logger";
 import { agentPromptService } from "./AgentPromptService";
-import { ProcessManager } from "./ProcessManager";
+import { ClaudeCodeProvider } from "./ClaudeCodeProvider";
+import { CodexService } from "./CodexService";
+import { IAIProvider } from "../core/interfaces/IAIProvider";
+import { CodexConfig } from "../types/codex.types";
 
 export class SessionService {
-  private processManager: ProcessManager;
+  private claudeCodeProvider: ClaudeCodeProvider;
   private sessionRepository: SessionRepository;
   private messageRepository: MessageRepository;
+  private codexService: CodexService;
 
-  constructor(processManager?: ProcessManager) {
-    // 使用傳入的 ProcessManager 實例，或者建立新的（向後相容）
-    if (processManager) {
-      this.processManager = processManager;
-      logger.info("Using shared ProcessManager instance");
+  // Provider 映射表，根據 cliType 選擇對應的 provider
+  private providers: Map<string, IAIProvider> = new Map();
+
+  constructor(claudeCodeProvider?: ClaudeCodeProvider) {
+    // 使用傳入的 ClaudeCodeProvider 實例，或者建立新的（向後相容）
+    if (claudeCodeProvider) {
+      this.claudeCodeProvider = claudeCodeProvider;
+      logger.info("Using shared ClaudeCodeProvider instance");
     } else {
-      this.processManager = new ProcessManager(true);
-      logger.info("ProcessManager initialized (npx mode)");
-      // 監聽進程事件
-      this.setupProcessEventListeners();
+      this.claudeCodeProvider = new ClaudeCodeProvider(true);
+      logger.info("ClaudeCodeProvider initialized (npx mode)");
     }
 
     this.sessionRepository = new SessionRepository();
     this.messageRepository = new MessageRepository();
+    this.codexService = new CodexService();
+
+    // 註冊 providers 到映射表
+    this.providers.set('claude-code', this.claudeCodeProvider);
+    this.providers.set('codex', this.codexService);
+
+    // 設置統一的事件監聽
+    this.setupProviderEventListeners();
   }
 
   async initialize(): Promise<void> {
-    await this.processManager.initialize();
+    logger.info("SessionService initialization started");
+
+    // 初始化所有 providers
+    await this.claudeCodeProvider.initialize();
+    await this.codexService.initialize();
   }
 
-  private setupProcessEventListeners(): void {
-    // 進程準備就緒
-    this.processManager.on("processReady", async (data: { sessionId: string }) => {
-      const session = await this.sessionRepository.findById(data.sessionId);
-      if (session && session.status !== SessionStatus.IDLE) {
-        session.status = SessionStatus.IDLE;
-        session.updatedAt = new Date();
-        await this.sessionRepository.update(session);
-      }
-    });
+  /**
+   * 統一的 Provider 事件監聽設置
+   * 所有 provider 都使用相同的事件處理邏輯
+   */
+  private setupProviderEventListeners(): void {
+    // 為每個 provider 設置相同的事件監聽
+    this.providers.forEach((provider, cliType) => {
+      logger.info(`Setting up event listeners for ${cliType} provider`);
 
-    // 進程結束
-    this.processManager.on("processExit", async (data: { sessionId: string; code: number | null; signal: string | null }) => {
-      const session = await this.sessionRepository.findById(data.sessionId);
-      if (session) {
-        // 只有在執行失敗時才更新狀態為 ERROR
-        // 正常執行完成時，狀態應該保持 IDLE（已在 ProcessManager 中處理）
-        if (data.code !== 0) {
-          session.status = SessionStatus.ERROR;
-          session.error = `Process exited with code ${data.code}`;
-          session.updatedAt = new Date();
-          await this.sessionRepository.update(session);
+      // 訊息事件 - 統一處理
+      provider.on('message', async (messageData: any) => {
+        try {
+          // 轉發給前端（已經是標準化的 ClaudeStreamMessage 格式）
+          io.emit('message', messageData);
+        } catch (error) {
+          logger.error(`Failed to handle ${cliType} message:`, error);
         }
-        // 注意：不再將 code === 0 的情況設為 COMPLETED
-        // COMPLETED 狀態應該只在用戶明確結束 session 時才設置
-      }
-    });
+      });
 
-    // 進程錯誤
-    this.processManager.on("processError", async (data: { sessionId: string; error: string }) => {
-      const session = await this.sessionRepository.findById(data.sessionId);
-      if (session) {
-        session.status = SessionStatus.ERROR;
-        session.error = data.error;
-        session.updatedAt = new Date();
-        await this.sessionRepository.update(session);
-      }
+      // 狀態更新事件
+      provider.on('statusUpdate', async (data: { sessionId: string; status: string }) => {
+        try {
+          // 轉發狀態更新到前端
+          io.emit('statusUpdate', data);
+        } catch (error) {
+          logger.error(`Failed to handle ${cliType} status update:`, error);
+        }
+      });
+
+      // 進程開始事件
+      provider.on('processStarted', async (data: { sessionId: string; pid?: number }) => {
+        try {
+          // 轉發進程開始事件到前端
+          io.emit('processStarted', data);
+        } catch (error) {
+          logger.error(`Failed to handle ${cliType} process started:`, error);
+        }
+      });
+
+      // 進程結束事件 - 統一處理
+      provider.on('processExit', async (data: { sessionId: string; code: number; usage?: any }) => {
+        try {
+          const session = await this.sessionRepository.findById(data.sessionId);
+          if (session) {
+            // 只有在執行失敗時才更新狀態為 ERROR
+            // 正常執行完成時，狀態應該保持 IDLE（已在 Provider 中處理）
+            if (data.code !== 0) {
+              session.status = SessionStatus.ERROR;
+              session.error = `Process exited with code ${data.code}`;
+              session.updatedAt = new Date();
+              await this.sessionRepository.update(session);
+            }
+          }
+
+          // 轉發進程結束事件到前端
+          io.emit('processExit', data);
+        } catch (error) {
+          logger.error(`Failed to handle ${cliType} process exit:`, error);
+        }
+      });
+
+      // 會話 ID 事件
+      provider.on('sessionId', async (data: { sessionId: string; claudeSessionId: string }) => {
+        try {
+          // 更新 session 的 claudeSessionId
+          const session = await this.sessionRepository.findById(data.sessionId);
+          if (session) {
+            session.claudeSessionId = data.claudeSessionId;
+            await this.sessionRepository.update(session);
+            logger.info(`Updated Claude session ID for ${data.sessionId}: ${data.claudeSessionId}`);
+          }
+        } catch (error) {
+          logger.error(`Failed to update Claude session ID for ${cliType}:`, error);
+        }
+      });
+
+      // 錯誤事件 - 統一處理
+      provider.on('error', async (errorData: { sessionId: string; error: string; errorType?: string }) => {
+        try {
+          const session = await this.sessionRepository.findById(errorData.sessionId);
+          if (session) {
+            session.status = SessionStatus.ERROR;
+            session.error = errorData.error;
+            session.updatedAt = new Date();
+            await this.sessionRepository.update(session);
+          }
+
+          // 轉發錯誤事件到前端
+          io.emit('error', errorData);
+        } catch (error) {
+          logger.error(`Failed to handle ${cliType} error:`, error);
+        }
+      });
     });
+  }
+
+  /**
+   * 根據 session 的 cliType 獲取對應的 provider
+   */
+  private getProvider(session: Session): IAIProvider {
+    const cliType = session.cliType || 'claude-code';
+    const provider = this.providers.get(cliType);
+
+    if (!provider) {
+      throw new Error(`Unknown CLI type: ${cliType}`);
+    }
+
+    return provider;
   }
 
   async createSession(request: CreateSessionRequest): Promise<Session> {
@@ -225,6 +312,8 @@ export class SessionService {
       dangerouslySkipPermissions: request.dangerouslySkipPermissions || false,
       workflow_stage_id: request.workflow_stage_id,
       work_item_id: request.work_item_id,
+      cliType: request.cliType || 'claude-code',
+      codexConfig: request.codexConfig,
       lastUserMessage: undefined, // 初始時沒有用戶對話訊息
       messageCount: 0, // 初始對話計數為 0
       createdAt: new Date(),
@@ -235,11 +324,16 @@ export class SessionService {
     await this.sessionRepository.save(session);
 
     try {
-      // 啟動 Claude Code 進程
-      const processId = await this.processManager.startClaudeProcess(session);
+      // 獲取對應的 provider
+      const provider = this.getProvider(session);
+
+      logger.info(`Starting ${session.cliType} session for ${sessionId}`);
+      await provider.startSession(session);
+
+      // 獲取虛擬 processId（用於相容性）
+      session.processId = Date.now();
 
       // 更新 Session 狀態 - 如果有初始任務，保持 PROCESSING 狀態
-      session.processId = processId;
       // 只有在沒有初始任務時才設為 IDLE
       if (!session.task) {
         session.status = SessionStatus.IDLE;
@@ -409,7 +503,8 @@ export class SessionService {
 
     // 停止進程（如果有的話）
     if (session.processId) {
-      await this.processManager.stopProcess(sessionId);
+      const provider = this.getProvider(session);
+      await provider.stop(sessionId);
     }
 
     // Update session
@@ -443,7 +538,8 @@ export class SessionService {
     // 如果有進程在運行，先停止它
     if (session.processId && session.status === SessionStatus.IDLE) {
       try {
-        await this.processManager.stopProcess(sessionId);
+        const provider = this.getProvider(session);
+        await provider.stop(sessionId);
       } catch (error) {
         logger.warn(`Failed to stop process before deletion:`, error);
       }
@@ -533,27 +629,22 @@ export class SessionService {
 
       // 如果需要重新啟動進程，先啟動它
       if (needsRestart) {
-        logger.info(`Restarting Claude Code process for session ${sessionId}...`);
+        logger.info(`Restarting process for session ${sessionId}...`);
 
         // 清除 task 避免重複執行原始任務
-        // 保留原有的 claudeSessionId，讓進程使用 --resume 來恢復同一個對話
         const sessionForRestart = { ...session, task: "" };
 
-        try {
-          const processId = await this.processManager.startClaudeProcess(sessionForRestart);
-          session.processId = processId;
-          await this.sessionRepository.update(session);
-          logger.info(`Process restarted successfully with PID: ${processId}`);
-        } catch (error) {
-          logger.error(`Failed to restart process for session ${sessionId}:`, error);
-          throw new Error(`Failed to restart session: ${error instanceof Error ? error.message : "Unknown error"}`);
-        }
+        // 重新啟動對話
+        const provider = this.getProvider(session);
+        await provider.startSession(sessionForRestart);
+        session.processId = Date.now();
       }
 
-      // ProcessManager 會自動保存用戶訊息並發送到進程
-      logger.info(`Calling ProcessManager.sendMessage...`);
-      await this.processManager.sendMessage(sessionId, enhancedContent);
-      logger.info(`ProcessManager.sendMessage completed`);
+      // 根據 cliType 發送訊息到對應的 provider
+      logger.info(`Sending message via ${session.cliType}...`);
+      const provider = this.getProvider(session);
+      await provider.sendMessage(sessionId, enhancedContent);
+      logger.info(`Message sent successfully`);
 
       // 返回剛保存的用戶訊息
       logger.info(`Fetching recent messages...`);
@@ -641,8 +732,9 @@ export class SessionService {
     }
 
     try {
-      // 發送中斷信號到進程
-      await this.processManager.interruptProcess(sessionId);
+      // 根據 cliType 發送中斷信號到對應的 provider
+      const provider = this.getProvider(session);
+      await provider.interrupt(sessionId);
 
       // 中斷後保持在 IDLE 狀態，並清除錯誤訊息
       session.status = SessionStatus.IDLE;
@@ -679,7 +771,7 @@ export class SessionService {
     }
 
     // 檢查進程是否仍在運行
-    const processInfo = this.processManager.getProcessInfo(sessionId);
+    const processInfo = this.claudeCodeProvider.getProcessInfo(sessionId);
     if (!processInfo) {
       throw new ValidationError("Process not found for session", "PROCESS_NOT_FOUND");
     }
@@ -706,8 +798,8 @@ export class SessionService {
       throw new ValidationError("Session not found", "SESSION_NOT_FOUND");
     }
 
-    const processInfo = this.processManager.getProcessInfo(sessionId);
-    const metrics = await this.processManager.getProcessMetrics(sessionId);
+    const processInfo = this.claudeCodeProvider.getProcessInfo(sessionId);
+    const metrics = await this.claudeCodeProvider.getProcessMetrics(sessionId);
 
     return {
       processInfo,
@@ -718,8 +810,8 @@ export class SessionService {
 
   // 新增方法：獲取所有活躍進程統計
   async getSystemStats(): Promise<any> {
-    const allProcessInfo = this.processManager.getAllProcessInfo();
-    const activeCount = this.processManager.getActiveProcessCount();
+    const allProcessInfo = this.claudeCodeProvider.getAllProcessInfo();
+    const activeCount = this.claudeCodeProvider.getActiveProcessCount();
 
     return {
       totalProcesses: activeCount,

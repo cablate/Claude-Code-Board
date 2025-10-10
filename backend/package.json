@@ -11,6 +11,7 @@
     "test:watch": "cucumber-js --watch"
   },
   "dependencies": {
+    "@openai/codex-sdk": "^0.46.0",
     "@types/node-notifier": "^8.0.5",
     "@types/sqlite3": "^5.1.0",
     "cross-env": "^7.0.3",

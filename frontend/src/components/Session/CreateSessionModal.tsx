@@ -31,6 +31,12 @@ export const CreateSessionModal: React.FC<CreateSessionModalProps> = ({
     dangerouslySkipPermissions: false,
     workflow_stage_id: '',
     work_item_id: defaultWorkItemId || '',
+    cliType: 'claude-code' as 'claude-code' | 'codex',
+    codexConfig: {
+      sandbox: 'auto',
+      model: 'gpt-4',
+      model_reasoning_effort: 'medium'
+    },
     ...prefillData, // 預填資料覆蓋預設值
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -129,6 +135,8 @@ export const CreateSessionModal: React.FC<CreateSessionModalProps> = ({
         dangerouslySkipPermissions: formData.dangerouslySkipPermissions,
         workflow_stage_id: formData.workflow_stage_id || undefined,
         work_item_id: formData.work_item_id || undefined,
+        cliType: formData.cliType,
+        codexConfig: formData.cliType === 'codex' ? formData.codexConfig : undefined,
       };
 
       const newSession = await createSession(request);
@@ -213,8 +221,32 @@ export const CreateSessionModal: React.FC<CreateSessionModalProps> = ({
                     基本設定
                   </h3>
 
-                  {/* Session 名稱 */}
+                  {/* CLI 類型選擇 */}
                   <div className="space-y-3">
+                    <div>
+                      <label htmlFor="cliType" className="block text-sm font-medium text-gray-700 mb-1.5">
+                        CLI 工具 *
+                      </label>
+                      <select
+                        id="cliType"
+                        name="cliType"
+                        value={formData.cliType}
+                        onChange={handleInputChange}
+                        className="w-full px-3 py-2 glass-ultra border border-white/40 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 backdrop-blur-sm bg-white/10"
+                      >
+                        <option value="claude-code">Claude Code (Anthropic)</option>
+                        <option value="codex">OpenAI Codex</option>
+                      </select>
+                      {formData.cliType === 'codex' && (
+                        <div className="mt-2 p-2 glass-ultra rounded-lg border border-orange-200/50 bg-orange-50/10">
+                          <p className="text-xs text-orange-700">
+                            ⚡ 使用 OpenAI Codex CLI (實驗性功能)
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                  {/* Session 名稱 */}
                     <div>
                       <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1.5">
                         Session 名稱 *

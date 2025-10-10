@@ -17,6 +17,8 @@ interface SessionRow {
   sort_order?: number;
   workflow_stage_id?: string;
   work_item_id?: string;
+  cli_type?: string;
+  codex_config?: string;
   error?: string;
   created_at: string;
   updated_at: string;
@@ -48,6 +50,8 @@ export class SessionRepository {
       sortOrder: row.sort_order,
       workflow_stage_id: row.workflow_stage_id,
       work_item_id: row.work_item_id,
+      cliType: (row.cli_type as 'claude-code' | 'codex') || 'claude-code',
+      codexConfig: row.codex_config ? JSON.parse(row.codex_config) : undefined,
       error: row.error,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
@@ -72,6 +76,8 @@ export class SessionRepository {
       session.messageCount || 0,
       session.workflow_stage_id,
       session.work_item_id,
+      session.cliType || 'claude-code',
+      session.codexConfig ? JSON.stringify(session.codexConfig) : null,
       session.error,
       session.createdAt.toISOString(),
       session.updatedAt.toISOString(),
@@ -86,12 +92,12 @@ export class SessionRepository {
         session_id, name, working_dir, task, status, continue_chat,
         previous_session_id, claude_session_id, process_id, dangerously_skip_permissions,
         last_user_message, message_count, workflow_stage_id, work_item_id,
-        error, created_at, updated_at, completed_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cli_type, codex_config, error, created_at, updated_at, completed_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    
+
     await this.db.run(sql, this.mapSessionToRow(session));
-    
+
     // Record status history
     await this.recordStatusHistory(session.sessionId, null, session.status, 'created');
   }
@@ -100,18 +106,18 @@ export class SessionRepository {
     // Get the old session to record status change
     const oldSession = await this.findById(session.sessionId);
     const oldStatus = oldSession?.status;
-    
+
     session.updatedAt = new Date();
-    
+
     const sql = `
       UPDATE sessions SET
         name = ?, working_dir = ?, task = ?, status = ?, continue_chat = ?,
         previous_session_id = ?, claude_session_id = ?, process_id = ?, dangerously_skip_permissions = ?,
         last_user_message = ?, message_count = ?, workflow_stage_id = ?, work_item_id = ?,
-        error = ?, updated_at = ?, completed_at = ?, deleted_at = ?
+        cli_type = ?, codex_config = ?, error = ?, updated_at = ?, completed_at = ?, deleted_at = ?
       WHERE session_id = ?
     `;
-    
+
     const params = [
       session.name,
       session.workingDir,
@@ -126,15 +132,17 @@ export class SessionRepository {
       session.messageCount || 0,
       session.workflow_stage_id,
       session.work_item_id,
+      session.cliType || 'claude-code',
+      session.codexConfig ? JSON.stringify(session.codexConfig) : null,
       session.error,
       session.updatedAt.toISOString(),
       session.completedAt?.toISOString(),
       session.deletedAt?.toISOString(),
       session.sessionId
     ];
-    
+
     await this.db.run(sql, params);
-    
+
     // Record status history if status changed
     if (oldStatus && oldStatus !== session.status) {
       await this.recordStatusHistory(session.sessionId, oldStatus, session.status, 'updated');

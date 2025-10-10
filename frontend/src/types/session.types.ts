@@ -13,6 +13,9 @@ export interface Session {
   messageCount?: number;
   sortOrder?: number;
   error?: string;
+  // CLI 類型相關
+  cliType?: 'claude-code' | 'codex';
+  codexConfig?: any;
   createdAt: Date;
   updatedAt: Date;
   completedAt?: Date;
@@ -60,6 +63,9 @@ export interface CreateSessionRequest {
   dangerouslySkipPermissions?: boolean;
   workflow_stage_id?: string;
   work_item_id?: string;
+  // CLI 類型相關
+  cliType?: 'claude-code' | 'codex';
+  codexConfig?: any;
 }
 
 export interface Message {
