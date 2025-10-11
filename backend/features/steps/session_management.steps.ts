@@ -2,11 +2,11 @@ import { When, Then } from '@cucumber/cucumber';
 import { expect } from 'chai';
 import { TestContext } from './world';
 import { SessionService } from '../../src/services/SessionService';
-import { ProcessManager } from '../../src/services/ProcessManager';
+import { AIToolManager } from '../../src/services/AIToolManager';
 import { CreateSessionRequest, SessionStatus } from '../../src/types/session.types';
 
 // Mock ProcessManager for testing
-class MockProcessManager extends ProcessManager {
+class MockAIToolManager extends AIToolManager {
   private testContext: TestContext;
   
   constructor(context: TestContext) {
@@ -14,7 +14,7 @@ class MockProcessManager extends ProcessManager {
     this.testContext = context;
   }
   
-  async startClaudeProcess(session: any): Promise<number> {
+  async startToolProcess(session: any): Promise<number> {
     const mockPid = Math.floor(Math.random() * 10000) + 1000;
     this.testContext.mockProcesses.set(mockPid.toString(), {
       sessionId: session.sessionId,
@@ -45,7 +45,7 @@ When('使用者建立新 Session，設定如下：', async function(this: TestCo
     if (!sessionService) {
       sessionService = new SessionService();
       // 注入 Mock ProcessManager
-      (sessionService as any).processManager = new MockProcessManager(this);
+      (sessionService as any).processManager = new MockAIToolManager(this);
     }
     
     const result = await sessionService.createSession(request);

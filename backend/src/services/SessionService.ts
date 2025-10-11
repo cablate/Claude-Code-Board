@@ -5,68 +5,52 @@ import { io } from "../server";
 import { CreateSessionRequest, Session, SessionStatus } from "../types/session.types";
 import { logger } from "../utils/logger";
 import { agentPromptService } from "./AgentPromptService";
-import { ProcessManager } from "./ProcessManager";
+import { AIToolManager } from "./AIToolManager";
 
 export class SessionService {
-  private processManager: ProcessManager;
+  private processManager: AIToolManager;
   private sessionRepository: SessionRepository;
   private messageRepository: MessageRepository;
 
-  constructor(processManager?: ProcessManager) {
+  constructor(processManager?: AIToolManager) {
     // 使用傳入的 ProcessManager 實例，或者建立新的（向後相容）
     if (processManager) {
       this.processManager = processManager;
       logger.info("Using shared ProcessManager instance");
     } else {
-      this.processManager = new ProcessManager(true);
-      logger.info("ProcessManager initialized (npx mode)");
-      // 監聽進程事件
-      this.setupProcessEventListeners();
+      this.processManager = new AIToolManager();
+      logger.info("AIToolManager initialized");
     }
+    // Always set up listeners
+    this.setupProcessEventListeners();
 
     this.sessionRepository = new SessionRepository();
     this.messageRepository = new MessageRepository();
   }
 
-  async initialize(): Promise<void> {
-    await this.processManager.initialize();
-  }
+  async initialize(): Promise<void> {}
 
   private setupProcessEventListeners(): void {
-    // 進程準備就緒
-    this.processManager.on("processReady", async (data: { sessionId: string }) => {
-      const session = await this.sessionRepository.findById(data.sessionId);
-      if (session && session.status !== SessionStatus.IDLE) {
-        session.status = SessionStatus.IDLE;
-        session.updatedAt = new Date();
-        await this.sessionRepository.update(session);
-      }
-    });
-
     // 進程結束
-    this.processManager.on("processExit", async (data: { sessionId: string; code: number | null; signal: string | null }) => {
-      const session = await this.sessionRepository.findById(data.sessionId);
-      if (session) {
-        // 只有在執行失敗時才更新狀態為 ERROR
-        // 正常執行完成時，狀態應該保持 IDLE（已在 ProcessManager 中處理）
-        if (data.code !== 0) {
-          session.status = SessionStatus.ERROR;
-          session.error = `Process exited with code ${data.code}`;
-          session.updatedAt = new Date();
-          await this.sessionRepository.update(session);
-        }
-        // 注意：不再將 code === 0 的情況設為 COMPLETED
-        // COMPLETED 狀態應該只在用戶明確結束 session 時才設置
-      }
+
+    this.processManager.on("processExit", (data: { sessionId: string; code: number | null; signal: string | null }) => {
+      // This event is now for logging/notification purposes only.
+      // The definitive status update is handled synchronously in the sendMessage method.
+      logger.info(`[SessionService] Received processExit event for session ${data.sessionId} with code: ${data.code}, signal: ${data.signal}`);
     });
 
-    // 進程錯誤
-    this.processManager.on("processError", async (data: { sessionId: string; error: string }) => {
+    // 處理來自適配器的錯誤
+
+    this.processManager.on("error", async (data: { sessionId: string; error: string }) => {
       const session = await this.sessionRepository.findById(data.sessionId);
+
       if (session) {
         session.status = SessionStatus.ERROR;
+
         session.error = data.error;
+
         session.updatedAt = new Date();
+
         await this.sessionRepository.update(session);
       }
     });
@@ -219,7 +203,7 @@ export class SessionService {
       name: request.name,
       workingDir: request.workingDir,
       task: enhancedTask,
-      status: SessionStatus.PROCESSING,
+      status: SessionStatus.INITIALIZING, // Start as INITIALIZING to meet frontend expectations and avoid race condition
       continueChat: request.continueChat || false,
       previousSessionId: request.previousSessionId,
       dangerouslySkipPermissions: request.dangerouslySkipPermissions || false,
@@ -235,18 +219,18 @@ export class SessionService {
     await this.sessionRepository.save(session);
 
     try {
-      // 啟動 Claude Code 進程
-      const processId = await this.processManager.startClaudeProcess(session);
+      // 啟動 AI 工具進程, 此方法只準備工具，不發送訊息
+      const processId = await this.processManager.startToolProcess(session);
+      session.processId = processId; // Assign to in-memory object for immediate return
 
-      // 更新 Session 狀態 - 如果有初始任務，保持 PROCESSING 狀態
-      session.processId = processId;
-      // 只有在沒有初始任務時才設為 IDLE
-      if (!session.task) {
-        session.status = SessionStatus.IDLE;
+      // 如果有初始任務，則非同步執行它
+      // 這樣可以讓 createSession API 快速返回，同時確保初始任務能走完整的狀態更新流程
+      if (session.task) {
+        this.sendMessage(session.sessionId, session.task).catch((err) => {
+          logger.error(`Failed to execute initial task for session ${session.sessionId}:`, err);
+          // 可以在此處選擇性地更新 session 狀態為 error
+        });
       }
-      session.updatedAt = new Date();
-
-      await this.sessionRepository.update(session);
 
       // 獲取該 session 的專案和標籤資訊（新創建的通常為空，但保持 API 一致性）
       const [projects, tags] = await Promise.all([this.sessionRepository.getSessionProjects(session.sessionId), this.sessionRepository.getSessionTags(session.sessionId)]);
@@ -509,8 +493,15 @@ export class SessionService {
         }
       }
 
-      // 如果 Session 是 COMPLETED 或 ERROR 狀態，需要重新啟動進程
-      const needsRestart = session.status === SessionStatus.COMPLETED || session.status === SessionStatus.ERROR;
+      // If no tool is active in memory for this session (e.g., after a server restart),
+      // or if the session is in a state that requires a restart, start a new tool process.
+      if (!this.processManager.isToolActive(sessionId)) {
+        logger.info(`No active tool found for session ${sessionId} in memory. Starting a new tool instance.`);
+        // Clear the task to avoid re-executing the original task, but keep the conversation history.
+        const sessionForRestart = { ...session, task: "" };
+        await this.processManager.startToolProcess(sessionForRestart);
+        logger.info(`Tool instance started for existing session ${sessionId}.`);
+      }
 
       // 發送訊息前，先更新 session 狀態為 PROCESSING 並清除舊錯誤
       session.status = SessionStatus.PROCESSING;
@@ -519,7 +510,6 @@ export class SessionService {
       session.messageCount = (session.messageCount || 0) + 1; // 增加訊息計數
       session.updatedAt = new Date();
       await this.sessionRepository.update(session);
-      logger.info(`Session status updated to PROCESSING, needsRestart: ${needsRestart}`);
 
       // 廣播 session 更新到前端
       const updateData = {
@@ -531,29 +521,25 @@ export class SessionService {
       logger.info("=== 發送 session_updated WebSocket 事件 ===", updateData);
       io.emit("session_updated", updateData);
 
-      // 如果需要重新啟動進程，先啟動它
-      if (needsRestart) {
-        logger.info(`Restarting Claude Code process for session ${sessionId}...`);
-
-        // 清除 task 避免重複執行原始任務
-        // 保留原有的 claudeSessionId，讓進程使用 --resume 來恢復同一個對話
-        const sessionForRestart = { ...session, task: "" };
-
-        try {
-          const processId = await this.processManager.startClaudeProcess(sessionForRestart);
-          session.processId = processId;
-          await this.sessionRepository.update(session);
-          logger.info(`Process restarted successfully with PID: ${processId}`);
-        } catch (error) {
-          logger.error(`Failed to restart process for session ${sessionId}:`, error);
-          throw new Error(`Failed to restart session: ${error instanceof Error ? error.message : "Unknown error"}`);
-        }
-      }
-
       // ProcessManager 會自動保存用戶訊息並發送到進程
       logger.info(`Calling ProcessManager.sendMessage...`);
       await this.processManager.sendMessage(sessionId, enhancedContent);
-      logger.info(`ProcessManager.sendMessage completed`);
+      logger.info(`ProcessManager.sendMessage completed for session ${sessionId}`);
+
+      // After the entire process is confirmed to be finished, update the status to IDLE.
+      try {
+        const finalSession = await this.sessionRepository.findById(sessionId);
+        if (finalSession) {
+          finalSession.status = SessionStatus.IDLE;
+          finalSession.error = null;
+          await this.sessionRepository.update(finalSession);
+          logger.info(`[SessionService] Successfully set session ${sessionId} to IDLE in DB after message completion.`);
+        } else {
+          logger.error(`[SessionService] CRITICAL: Session ${sessionId} not found in DB when trying to set to IDLE after completion.`);
+        }
+      } catch (dbError) {
+        logger.error(`[SessionService] CRITICAL: Failed to update session ${sessionId} to IDLE in DB after completion.`, dbError);
+      }
 
       // 返回剛保存的用戶訊息
       logger.info(`Fetching recent messages...`);
@@ -707,7 +693,7 @@ export class SessionService {
     }
 
     const processInfo = this.processManager.getProcessInfo(sessionId);
-    const metrics = await this.processManager.getProcessMetrics(sessionId);
+    const metrics = null; // TODO: Re-implement metrics in AIToolManager/Adapter
 
     return {
       processInfo,
@@ -719,7 +705,7 @@ export class SessionService {
   // 新增方法：獲取所有活躍進程統計
   async getSystemStats(): Promise<any> {
     const allProcessInfo = this.processManager.getAllProcessInfo();
-    const activeCount = this.processManager.getActiveProcessCount();
+    const activeCount = this.processManager.getAllProcessInfo().length;
 
     return {
       totalProcesses: activeCount,

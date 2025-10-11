@@ -521,7 +521,7 @@ const SessionDetailComponent: React.FC<SessionDetailProps> = ({ sessionId: propS
           session={session}
           initialMessages={messages}
           isSessionActive={session.status === SessionStatus.IDLE || session.status === SessionStatus.PROCESSING || session.status === SessionStatus.COMPLETED || session.status === SessionStatus.ERROR}
-          isProcessing={session.status === SessionStatus.PROCESSING}
+          isProcessing={session.status === SessionStatus.PROCESSING || session.status === SessionStatus.INITIALIZING}
           onSessionUpdate={handleSessionUpdate}
         />
       </div>

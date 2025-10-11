@@ -5,7 +5,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { errorHandler } from './middleware/error.middleware';
 import { logger } from './utils/logger';
 import { Database } from './database/database';
-import { ProcessManager } from './services/ProcessManager';
+import { AIToolManager } from './services/AIToolManager';
 import { getEnvConfig } from './config/env.config';
 
 const config = getEnvConfig();
@@ -57,7 +57,7 @@ export { io };
 const PORT = config.port;
 
 // Global process manager instance
-let processManager: ProcessManager;
+let processManager: AIToolManager;
 
 // 全局錯誤處理
 process.on('uncaughtException', (error) => {
@@ -83,10 +83,10 @@ async function startServer() {
     logger.info('Agent Prompt Service initialized');
 
     // Initialize process manager
-    processManager = new ProcessManager();
+    processManager = new AIToolManager();
     
     // 設定 ProcessManager 錯誤處理，防止程序崩潰
-    processManager.on('error', (data) => {
+    processManager.on('error', (data: any) => {
       logger.error(`ProcessManager error for session ${data.sessionId}:`, {
         error: data.error,
         errorType: data.errorType,
@@ -104,7 +104,7 @@ async function startServer() {
     });
     
     // 設定 ProcessManager 事件處理，用於 WebSocket 推送
-    processManager.on('message', (data) => {
+    processManager.on('message', (data: any) => {
       logger.info(`=== WebSocket: Received message event from ProcessManager ===`);
       logger.info(`SessionId: ${data.sessionId}, Type: ${data.type}, Content: ${data.content?.slice(0, 100)}`);
       
@@ -129,22 +129,22 @@ async function startServer() {
       logger.info(`=== WebSocket: Message forwarding completed ===`);
     });
 
-    processManager.on('output', (data) => {
+    processManager.on('output', (data: any) => {
       io.to(`session:${data.sessionId}`).emit('output', data);
     });
 
-    processManager.on('statusUpdate', (data) => {
+    processManager.on('statusUpdate', (data: any) => {
       // 發送到特定 session 房間（詳細頁面使用）
       io.to(`session:${data.sessionId}`).emit('status_update', data);
       // 同時發送全域事件（列表頁面使用）
       io.emit('global_status_update', data);
     });
 
-    processManager.on('processStarted', (data) => {
+    processManager.on('processStarted', (data: any) => {
       io.emit('process_started', data);
     });
 
-    processManager.on('processExit', (data) => {
+    processManager.on('processExit', (data: any) => {
       // 發送到特定 session 房間（詳細頁面使用）
       io.to(`session:${data.sessionId}`).emit('process_exit', data);
       // 同時發送全域事件（列表頁面使用）

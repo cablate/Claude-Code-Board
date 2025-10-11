@@ -46,6 +46,7 @@ export interface Session {
 }
 
 export enum SessionStatus {
+  INITIALIZING = 'initializing',
   PROCESSING = 'processing',
   IDLE = 'idle',
   COMPLETED = 'completed',

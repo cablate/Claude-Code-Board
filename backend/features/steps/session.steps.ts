@@ -120,10 +120,10 @@ Given('該 Session 有對話歷史記錄', async function(this: TestContext) {
   if (sessionId) {
     // 儲存實際的對話歷史到資料庫
     const messages = [
-      { sessionId, role: 'user' as const, content: '請分析專案結構' },
-      { sessionId, role: 'assistant' as const, content: '我已經分析了專案結構...' },
-      { sessionId, role: 'user' as const, content: '優化程式碼' },
-      { sessionId, role: 'assistant' as const, content: '以下是優化建議...' }
+      { sessionId, type: 'user' as const, content: '請分析專案結構' },
+      { sessionId, type: 'assistant' as const, content: '我已經分析了專案結構...' },
+      { sessionId, type: 'user' as const, content: '優化程式碼' },
+      { sessionId, type: 'assistant' as const, content: '以下是優化建議...' }
     ];
     
     // 保存每個訊息到資料庫
@@ -166,10 +166,10 @@ Given('Session 有對話歷史記錄', async function(this: TestContext) {
     
     // 儲存實際的對話歷史到資料庫
     const messages = [
-      { sessionId, role: 'user' as const, content: '請分析專案結構' },
-      { sessionId, role: 'assistant' as const, content: '我已經分析了專案結構...' },
-      { sessionId, role: 'user' as const, content: '優化程式碼' },
-      { sessionId, role: 'assistant' as const, content: '以下是優化建議...' }
+      { sessionId, type: 'user' as const, content: '請分析專案結構' },
+      { sessionId, type: 'assistant' as const, content: '我已經分析了專案結構...' },
+      { sessionId, type: 'user' as const, content: '優化程式碼' },
+      { sessionId, type: 'assistant' as const, content: '以下是優化建議...' }
     ];
     
     // 保存每個訊息到資料庫
@@ -250,7 +250,7 @@ Given('Session 已經有 {int} 筆對話記錄', async function(this: TestContex
     // 模擬對話記錄
     this.testData.conversations = Array.from({ length: count }, (_, i) => ({
       messageId: uuidv4(),
-      role: i % 2 === 0 ? 'user' : 'assistant',
+      type: i % 2 === 0 ? 'user' : 'assistant',
       content: `Message ${i + 1}`,
       timestamp: new Date(Date.now() - (count - i) * 60000)
     }));
