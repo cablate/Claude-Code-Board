@@ -1,10 +1,10 @@
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import * as readline from 'readline';
-import { ClaudeStreamMessage, ToolUsageRecord } from '../types/process.types';
-import { MessageRepository } from '../repositories/MessageRepository';
-import { logger } from '../utils/logger';
-import { getUnifiedProcessorConfig, UnifiedProcessorConfig } from '../config/unified-processor.config';
+import { UnifiedMessage } from '../../interfaces/UnifiedMessage';
+import { ToolUsageRecord } from '../../types/process.types';
+import { logger } from '../../utils/logger';
+import { getUnifiedProcessorConfig, UnifiedProcessorConfig } from '../../config/unified-processor.config';
 
 /**
  * 統一串流處理器 - 解決重複儲存問題
@@ -15,9 +15,8 @@ import { getUnifiedProcessorConfig, UnifiedProcessorConfig } from '../config/uni
  * 3. 學習 vibe-kanban：忽略不必要的訊息類型（如 result）
  * 4. 完整工具資訊：顯示工具名稱、參數、執行狀態
  */
-export class UnifiedStreamProcessor extends EventEmitter {
+export class ClaudeCodeStreamController extends EventEmitter {
   private childProcess: ChildProcess | null = null;
-  private messageRepository: MessageRepository;
   private config: UnifiedProcessorConfig;
   
   // 訊息管理
@@ -31,11 +30,10 @@ export class UnifiedStreamProcessor extends EventEmitter {
   
   constructor(config?: Partial<UnifiedProcessorConfig>) {
     super();
-    this.messageRepository = new MessageRepository();
     this.config = config ? { ...getUnifiedProcessorConfig(), ...config } : getUnifiedProcessorConfig();
     
     if (this.config.debug.verbose) {
-      logger.info('UnifiedStreamProcessor initialized with config:', this.config);
+      logger.info('ClaudeCodeStreamController initialized with config:', this.config);
     }
   }
 
@@ -110,7 +108,7 @@ export class UnifiedStreamProcessor extends EventEmitter {
         // 處理進程結束
         this.childProcess.on('close', (code) => {
           // 完成所有緩衝的訊息並儲存
-          this.flushAndSaveBuffers(sessionId);
+          this.flushBuffers(sessionId);
           
           this.emit('processExit', { sessionId, code });
           resolve();
@@ -189,6 +187,10 @@ export class UnifiedStreamProcessor extends EventEmitter {
         
       case 'message_stop':
         this.handleMessageStop(sessionId, json);
+        this.emit('message_stop', {
+          sessionId,
+          messageId
+        });
         break;
         
       case 'content_block_start':
@@ -270,7 +272,7 @@ export class UnifiedStreamProcessor extends EventEmitter {
     for (const contentItem of contentArray) {
       if (contentItem.type === 'text' && contentItem.text) {
         // 即時發送給前端
-        const realtimeMessage: ClaudeStreamMessage = {
+        const realtimeMessage: UnifiedMessage = {
           sessionId,
           type: 'assistant',
           content: contentItem.text,
@@ -283,8 +285,10 @@ export class UnifiedStreamProcessor extends EventEmitter {
         
         this.emit('message', realtimeMessage);
         
-        // 儲存到資料庫
-        this.saveMessage(sessionId, 'assistant', contentItem.text, { messageId });
+        // 提供給通用訊息儲存介面
+        this.emitPersistMessage({
+          ...realtimeMessage
+        });
         
       } else if (contentItem.type === 'tool_use') {
         // 處理工具使用
@@ -308,7 +312,7 @@ export class UnifiedStreamProcessor extends EventEmitter {
     
     
     // 即時發送工具使用訊息給前端
-    const toolMessage: ClaudeStreamMessage = {
+    const toolMessage: UnifiedMessage = {
       sessionId,
       type: 'tool_use',
       content: toolDescription,
@@ -324,12 +328,15 @@ export class UnifiedStreamProcessor extends EventEmitter {
     
     this.emit('message', toolMessage);
     
-    // 儲存工具使用記錄
-    this.saveMessage(sessionId, 'tool_use', toolDescription, {
-      messageId,
-      toolName,
-      toolId,
-      toolInput
+    // 提供給通用訊息儲存介面
+    this.emitPersistMessage({
+      ...toolMessage,
+      metadata: {
+        ...toolMessage.metadata,
+        toolName,
+        toolId,
+        toolInput
+      }
     });
   }
 
@@ -473,7 +480,7 @@ export class UnifiedStreamProcessor extends EventEmitter {
         buffer.content.push(delta.text);
         
         // 即時發送片段
-        const message: ClaudeStreamMessage = {
+        const message: UnifiedMessage = {
           sessionId,
           type: 'assistant',
           content: delta.text,
@@ -500,9 +507,15 @@ export class UnifiedStreamProcessor extends EventEmitter {
       const fullContent = buffer.content.join('');
       
       // 儲存完整訊息
-      this.saveMessage(sessionId, 'assistant', fullContent, {
-        messageId: this.currentSequenceId,
-        duration: Date.now() - buffer.startTime.getTime()
+      this.emitPersistMessage({
+        sessionId,
+        type: 'assistant',
+        content: fullContent,
+        timestamp: new Date(),
+        metadata: {
+          messageId: this.currentSequenceId,
+          duration: Date.now() - buffer.startTime.getTime()
+        }
       });
       
       // 發送完成事件
@@ -574,7 +587,7 @@ export class UnifiedStreamProcessor extends EventEmitter {
           resultContent = `✅ 工具 ${toolId} 執行完成`;
         }
         
-        const toolResultMessage: ClaudeStreamMessage = {
+        const toolResultMessage: UnifiedMessage = {
           sessionId,
           type: 'tool_use',
           content: resultContent,
@@ -591,11 +604,15 @@ export class UnifiedStreamProcessor extends EventEmitter {
         this.emit('message', toolResultMessage);
         
         // 儲存工具結果
-        this.saveMessage(sessionId, 'tool_use', resultContent, {
-          messageId,
-          toolId: contentItem.tool_use_id,
-          isError: contentItem.is_error,
-          output: contentItem.content
+        this.emitPersistMessage({
+          ...toolResultMessage,
+          metadata: {
+            ...toolResultMessage.metadata,
+            messageId,
+            toolId: contentItem.tool_use_id,
+            isError: contentItem.is_error,
+            output: contentItem.content
+          }
         });
         
       } else if (contentItem.type === 'text') {
@@ -618,7 +635,7 @@ export class UnifiedStreamProcessor extends EventEmitter {
     }
     
     // 即時發送系統訊息
-    const systemMessage: ClaudeStreamMessage = {
+    const systemMessage: UnifiedMessage = {
       sessionId,
       type: 'system',
       content,
@@ -629,7 +646,9 @@ export class UnifiedStreamProcessor extends EventEmitter {
     this.emit('message', systemMessage);
     
     // 儲存系統訊息
-    this.saveMessage(sessionId, 'system', content, { messageId });
+    this.emitPersistMessage({
+      ...systemMessage
+    });
   }
 
   /**
@@ -658,50 +677,47 @@ export class UnifiedStreamProcessor extends EventEmitter {
     });
     
     // 儲存原始輸出
-    this.saveMessage(sessionId, 'output', line, { type: 'raw_output' });
+    this.emitPersistMessage({
+      sessionId,
+      type: 'output',
+      content: line,
+      timestamp: new Date(),
+      metadata: { type: 'raw_output' }
+    });
   }
 
   /**
    * 儲存訊息到資料庫
    */
-  private async saveMessage(
-    sessionId: string,
-    type: 'user' | 'assistant' | 'system' | 'tool_use' | 'thinking' | 'output' | 'error',
-    content: string,
-    metadata?: any
-  ): Promise<void> {
-    try {
-      // 檢查內容是否為空
-      if (!content.trim()) {
-        return;
-      }
-
-      const saved = await this.messageRepository.save({
-        sessionId,
-        type,
-        content,
-        metadata
-      });
-      
-      logger.info(`Message saved: ${saved.messageId} (${type}) - ${content.slice(0, 50)}...`);
-      
-    } catch (error) {
-      logger.error('Failed to save message:', error);
+  private emitPersistMessage(message: UnifiedMessage): void {
+    if (!message.content.trim()) {
+      return;
     }
+
+    this.emit('persistMessage', {
+      ...message,
+      timestamp: message.timestamp ?? new Date()
+    });
   }
 
   /**
    * 完成所有緩衝的訊息並儲存
    */
-  private flushAndSaveBuffers(sessionId: string): void {
+  private flushBuffers(sessionId: string): void {
     // 完成所有未完成的訊息
     this.messageBuffer.forEach((buffer, messageId) => {
       if (buffer.content.length > 0) {
         const fullContent = buffer.content.join('');
-        this.saveMessage(sessionId, 'assistant', fullContent, {
-          messageId,
-          isComplete: true,
-          duration: Date.now() - buffer.startTime.getTime()
+        this.emitPersistMessage({
+          sessionId,
+          type: 'assistant',
+          content: fullContent,
+          timestamp: new Date(),
+          metadata: {
+            messageId,
+            isComplete: true,
+            duration: Date.now() - buffer.startTime.getTime()
+          }
         });
       }
     });

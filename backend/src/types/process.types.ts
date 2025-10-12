@@ -1,3 +1,5 @@
+import type { UnifiedMessage } from '../interfaces/UnifiedMessage';
+
 export interface ProcessInfo {
   sessionId: string;
   pid: number;
@@ -29,44 +31,8 @@ export interface ProcessMessage {
   metadata?: any;
 }
 
-// Claude 特定的訊息類型
-export interface ClaudeStreamMessage {
-  sessionId: string;
-  type: 'assistant' | 'user' | 'system' | 'tool_use' | 'thinking' | 'error' | 'result';
-  content: string;
-  timestamp: Date;
-  metadata?: {
-    // 訊息識別
-    messageId?: string;
-    
-    // 工具使用相關
-    toolName?: string;
-    toolInput?: any;
-    toolOutput?: any;
-    toolStatus?: 'start' | 'complete' | 'error';
-    toolId?: string;
-    isError?: boolean;
-    
-    // 思考過程
-    isThinking?: boolean;
-    thinkingDepth?: number;
-    
-    // 檔案操作
-    fileOperation?: 'read' | 'write' | 'edit' | 'delete' | 'list' | 'search';
-    filePath?: string;
-    fileContent?: string;
-    lineNumbers?: { start: number; end: number };
-    
-    // 串流相關
-    isPartial?: boolean;
-    sequenceId?: string;
-    isComplete?: boolean;
-    isStreaming?: boolean;
-    
-    // 原始 JSON 資料
-    raw?: any;
-  };
-}
+// Claude 特定的訊息類型（維持別名以兼容舊程式碼）
+export type ClaudeStreamMessage = UnifiedMessage;
 
 // 工具使用記錄
 export interface ToolUsageRecord {

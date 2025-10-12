@@ -1,11 +1,11 @@
 import { IAITool } from '../interfaces/IAITool';
-import { ClaudeCodeAdapter } from '../adapters/ClaudeCodeAdapter';
+import { ClaudeCodeToolAdapter } from '../adapters/claudeCode/ClaudeCodeToolAdapter';
 
 export class AIToolFactory {
   static createTool(toolType: string): IAITool {
     switch (toolType) {
       case 'claude':
-        return new ClaudeCodeAdapter();
+        return new ClaudeCodeToolAdapter();
       // Future tools can be added here
       // case 'gemini':
       //   return new GeminiAdapter();

@@ -1,6 +1,10 @@
+import { UnifiedMessageType } from './UnifiedMessage';
+
+type AIStreamMessageType = Exclude<UnifiedMessageType, 'output'>;
+
 export interface AIStreamMessage {
   sessionId: string;
-  type: 'assistant' | 'user' | 'system' | 'tool_use' | 'thinking' | 'error';
+  type: AIStreamMessageType;
   content: string;
   timestamp: Date;
   metadata?: {
