@@ -22,7 +22,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Maintenance](https://img.shields.io/badge/維護中%3F-否-red.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](#requirements)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.12.0-brightgreen.svg)](https://nodejs.org/)
 
 </div>
 
@@ -98,7 +98,7 @@ Claude Code CLI 在單一專注的編程對話中表現優異。然而，在管�
 ### 系統需求
 
 - **作業系統**：Windows 10/11
-- **Node.js**：18.0.0 或更高版本
+- **Node.js**：22.12.0 或更高版本
 - **Claude Code CLI**：已全域安裝的最新版本
   ```bash
   npm install -g @anthropic-ai/claude-code

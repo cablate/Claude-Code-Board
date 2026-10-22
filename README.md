@@ -22,7 +22,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-no-red.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](#requirements)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.12.0-brightgreen.svg)](https://nodejs.org/)
 
 </div>
 
@@ -103,7 +103,7 @@ Claude Code CLI is excellent for single-focus coding sessions. However, when man
 ### Prerequisites
 
 - **Operating System**: Windows 10/11
-- **Node.js**: Version 18.0.0 or higher
+- **Node.js**: Version 22.12.0 or higher
 - **Claude Code CLI**: Latest version installed globally
   ```bash
   npm install -g @anthropic-ai/claude-code
